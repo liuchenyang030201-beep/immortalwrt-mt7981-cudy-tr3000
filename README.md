@@ -6,6 +6,15 @@
 
 ---
 
+支持 Cudy TR3000 512M
+新增 512M config
+新增 4G QMI / MBIM / RNDIS / CDC / USB Serial 驱动
+Actions 里选择 512M 编译
+
+！！！！仅适合 512M Flash 改版/对应布局机器
+不要刷到普通 128M/256M 机器
+刷机不保留配置
+
 ## immortalwrt 源码
 
 编译自 https://github.com/padavanonly/immortalwrt-mt798x-6.6 ，兼容 Cudy Tr3000 128M 新 flash
