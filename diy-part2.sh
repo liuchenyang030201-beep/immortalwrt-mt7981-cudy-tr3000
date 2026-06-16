@@ -1,485 +1,493 @@
-name: ImmortalWrt Builder
+#!/bin/bash
 
-permissions:
-contents: write
+#
 
-on:
-repository_dispatch:
-types:
-- "Source Code Update"
+# https://github.com/P3TERX/Actions-OpenWrt
 
-workflow_dispatch:
-inputs:
-device:
-description: "Build device"
-required: true
-type: choice
-default: "512M"
-options:
-- "512M"
-- "256M"
-- "128M"
-- "128M-Ubootmod"
-- "all"
+# File name: diy-part2.sh
+
+# Description: OpenWrt DIY script part 2 (After Update feeds)
+
+#
+
+# This is free software, licensed under the MIT License.
+
+#
+
+set -e
+
+echo "============================================================"
+echo " DIY PART2: TR3000 512M Full Build"
+echo "============================================================"
+
+# ===============================
+
+# Rust workaround CI compatibility
+
+# ===============================
+
+if [ -f feeds/packages/lang/rust/Makefile ]; then
+sed -i 's/ci-llvm=true/ci-llvm=false/g' feeds/packages/lang/rust/Makefile
+fi
+
+# ===============================
+
+# Build date in image filename
+
+# ===============================
+
+if [ -f include/image.mk ] && ! grep -q 'BUILD_DATE := $(shell date +%Y%m%d)' include/image.mk; then
+sed -i -e '/^IMG_PREFIX:=/i BUILD_DATE := $(shell date +%Y%m%d)' 
+-e '/^IMG_PREFIX:=/ s/($(SUBTARGET))/\1-$(BUILD_DATE)/' 
+include/image.mk
+fi
+
+# ===============================
+
+# Basic path check
+
+# ===============================
+
+test -f target/linux/mediatek/image/filogic.mk
+test -d target/linux/mediatek/dts
+
+# ===============================
+
+# TR3000 512MB DTS injection
+
+# ===============================
+
+rm -rf mod512
+git clone --depth 1 https://github.com/zhuannn/cudy-tr3000-512 mod512
+
+test -f mod512/openwrt-mod/cudy-tr3000-512.mk
+test -n "$(find mod512 -name '*.dts' -print -quit)"
+
+echo "========== MOD512 MK CHECK =========="
+grep -E "cudy_tr3000-512mb-v1|DEVICE_DTS|IMAGE_SIZE|TARGET_DEVICES" mod512/openwrt-mod/cudy-tr3000-512.mk || true
+
+grep -q "cudy_tr3000-512mb-v1" target/linux/mediatek/image/filogic.mk || 
+cat mod512/openwrt-mod/cudy-tr3000-512.mk >> target/linux/mediatek/image/filogic.mk
+
+find mod512 -name "*.dts" -exec cp -f {} target/linux/mediatek/dts/ ;
+
+grep -q "cudy_tr3000-512mb-v1" target/linux/mediatek/image/filogic.mk
+ls target/linux/mediatek/dts/ | grep -q "tr3000.*512"
+
+# ===============================
+
+# Built-in files directories
+
+# ===============================
+
+mkdir -p files/etc/uci-defaults
+mkdir -p files/etc/init.d
+mkdir -p files/etc/vohive
+mkdir -p files/usr/bin
+mkdir -p files/www/luci-static/custom
+
+# ===============================
+
+# Default system settings
+
+# ===============================
+
+cat > files/etc/uci-defaults/90-custom-defaults <<'EOF'
+#!/bin/sh
+
+uci -q set system.@system[0].hostname='CudyX'
+uci -q set system.@system[0].zonename='Asia/Shanghai'
+uci -q set system.@system[0].timezone='CST-8'
+
+uci -q set network.lan.ipaddr='192.168.2.1'
+uci -q set network.lan.netmask='255.255.255.0'
+
+uci -q commit system
+uci -q commit network
+
+exit 0
+EOF
+
+chmod +x files/etc/uci-defaults/90-custom-defaults
+
+# ===============================
+
+# USB / HDD automount default
+
+# ===============================
+
+cat > files/etc/uci-defaults/91-automount <<'EOF'
+#!/bin/sh
+
+uci -q set fstab.@global[0].anon_swap='0'
+uci -q set fstab.@global[0].anon_mount='1'
+uci -q set fstab.@global[0].auto_swap='0'
+uci -q set fstab.@global[0].auto_mount='1'
+uci -q set fstab.@global[0].delay_root='5'
+uci -q set fstab.@global[0].check_fs='0'
+uci -q commit fstab
+
+exit 0
+EOF
+
+chmod +x files/etc/uci-defaults/91-automount
+
+# ===============================
+
+# VoHive binary built-in
+
+# TR3000 MT7981 is arm64
+
+# ===============================
+
+VOHIVE_VERSION="v1.3.5"
+VOHIVE_URL="https://github.com/iniwex5/vohive-release/releases/download/${VOHIVE_VERSION}/vohive_${VOHIVE_VERSION}_linux_arm64"
+
+echo "========== DOWNLOAD VOHIVE =========="
+curl -L --retry 3 --connect-timeout 20 -o files/usr/bin/vohive "$VOHIVE_URL"
+chmod +x files/usr/bin/vohive
+
+cat > files/etc/vohive/config.yaml <<'EOF'
+server:
+port: 7575
+debug: false
+
+web:
+username: admin
+password: admin123
+EOF
+
+cat > files/etc/init.d/vohive <<'EOF'
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+
+start() {
+killall vohive 2>/dev/null
+nohup /usr/bin/vohive -c /etc/vohive/config.yaml >/tmp/vohive.log 2>&1 &
+}
+
+stop() {
+killall vohive 2>/dev/null
+}
+EOF
+
+chmod +x files/etc/init.d/vohive
+
+cat > files/etc/uci-defaults/92-vohive <<'EOF'
+#!/bin/sh
+
+/etc/init.d/vohive enable
+/etc/init.d/vohive restart
+
+exit 0
+EOF
+
+chmod +x files/etc/uci-defaults/92-vohive
+
+# ===============================
+
+# LuCI custom corner badge
+
+# ===============================
+
+cat > files/www/luci-static/custom/halox-badge.js <<'EOF'
+(function () {
+function addBadge() {
+if (document.getElementById('halox-build-badge')) return;
 
 ```
-  repo:
-    description: "OpenWrt source repository"
-    required: true
-    type: string
-    default: "https://github.com/padavanonly/immortalwrt-mt798x-6.6"
+var badge = document.createElement('a');
+badge.id = 'halox-build-badge';
+badge.href = 'https://halox.pages.dev/';
+badge.target = '_blank';
+badge.rel = 'noopener noreferrer';
+badge.innerText = '编译自小猫崽 · HaloX';
 
-  commit:
-    description: "Source commit, leave empty for latest"
-    required: false
-    type: string
-    default: ""
+badge.style.position = 'fixed';
+badge.style.right = '16px';
+badge.style.bottom = '10px';
+badge.style.zIndex = '99999';
+badge.style.padding = '6px 10px';
+badge.style.borderRadius = '10px';
+badge.style.background = 'rgba(30, 30, 46, 0.72)';
+badge.style.backdropFilter = 'blur(8px)';
+badge.style.color = '#b4befe';
+badge.style.fontSize = '12px';
+badge.style.lineHeight = '1';
+badge.style.textDecoration = 'none';
+badge.style.boxShadow = '0 4px 14px rgba(0,0,0,0.25)';
+badge.style.border = '1px solid rgba(180,190,254,0.35)';
+badge.style.fontFamily = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
-  ssh:
-    description: "Run make menuconfig"
-    required: false
-    type: boolean
-    default: false
+badge.onmouseenter = function () {
+  badge.style.background = 'rgba(137, 180, 250, 0.22)';
+  badge.style.color = '#ffffff';
+};
 
-  release:
-    description: "Upload firmware to Release"
-    required: false
-    type: boolean
-    default: true
+badge.onmouseleave = function () {
+  badge.style.background = 'rgba(30, 30, 46, 0.72)';
+  badge.style.color = '#b4befe';
+};
 
-  prerelease:
-    description: "Mark Release as prerelease"
-    required: false
-    type: boolean
-    default: false
+document.body.appendChild(badge);
 ```
 
-env:
-DEVICE_INPUT: ${{ github.event.inputs.device || github.event.client_payload.device || '512M' }}
-CCACHE_DIR: /workdir/.ccache
-CCACHE_MAXSIZE: 2G
-REPO_URL: ${{ github.event.inputs.repo || github.event.client_payload.repo || 'https://github.com/padavanonly/immortalwrt-mt798x-6.6' }}
-REPO_BRANCH: openwrt-24.10-6.6
-REPO_COMMIT: ${{ github.event.inputs.commit || '' }}
-FEEDS_CONF: feeds.conf.default
-DIY_P1_SH: diy-part1.sh
-DIY_P2_SH: diy-part2.sh
-UPLOAD_RELEASE: ${{ github.event.inputs.release || 'true' }}
-PRERELEASE: ${{ github.event.inputs.prerelease || 'false' }}
-TZ: Asia/Shanghai
-
-jobs:
-menuconfig:
-name: Menuconfig and Push
-if: github.event.inputs.ssh == 'true' && github.event.inputs.device != 'all'
-runs-on: ubuntu-22.04
-
-```
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
-
-  - name: Init Environment
-    run: |
-      sudo apt-get update -qq
-      sudo apt-get install -y --no-install-recommends \
-        libncurses-dev \
-        build-essential \
-        git \
-        wget \
-        curl \
-        python3 \
-        bzip2
-      sudo mkdir -p /workdir
-      sudo chown $USER:$GROUPS /workdir
-
-  - name: Clone source code
-    working-directory: /workdir
-    run: |
-      git clone "$REPO_URL" -b "$REPO_BRANCH" --single-branch --filter=blob:none openwrt
-      if [ -n "$REPO_COMMIT" ]; then
-        cd openwrt
-        git checkout "$REPO_COMMIT"
-      fi
-      ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
-
-  - name: Set device variables
-    run: |
-      case "$DEVICE_INPUT" in
-        "512M")
-          echo "CONFIG_FILE=config/512m.config" >> "$GITHUB_ENV"
-          ;;
-        "256M")
-          echo "CONFIG_FILE=config/256m.config" >> "$GITHUB_ENV"
-          ;;
-        "128M")
-          echo "CONFIG_FILE=config/128m.config" >> "$GITHUB_ENV"
-          ;;
-        "128M-Ubootmod")
-          echo "CONFIG_FILE=config/128muboot.config" >> "$GITHUB_ENV"
-          ;;
-        *)
-          echo "Unsupported device: $DEVICE_INPUT"
-          exit 1
-          ;;
-      esac
-
-  - name: Copy previous config if exists
-    run: |
-      if [ -f "$GITHUB_WORKSPACE/${CONFIG_FILE}" ]; then
-        cp -f "$GITHUB_WORKSPACE/${CONFIG_FILE}" /workdir/openwrt/.config
-      fi
-
-  - name: Load custom feeds
-    run: |
-      if [ -f "$GITHUB_WORKSPACE/$FEEDS_CONF" ]; then
-        cp -f "$GITHUB_WORKSPACE/$FEEDS_CONF" /workdir/openwrt/feeds.conf.default
-      fi
-
-      chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
-      cd /workdir/openwrt
-      "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
-  - name: Update and install feeds
-    run: |
-      cd /workdir/openwrt
-      ./scripts/feeds update -a
-      ./scripts/feeds install -a
-
-  - name: Load custom configuration
-    run: |
-      if [ -f "$GITHUB_WORKSPACE/${CONFIG_FILE}" ]; then
-        cp -f "$GITHUB_WORKSPACE/${CONFIG_FILE}" /workdir/openwrt/.config
-      fi
-
-      chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
-      cd /workdir/openwrt
-      "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
-  - name: SSH connection to menuconfig
-    uses: mxschmitt/action-tmate@v3
-    timeout-minutes: 15
-
-  - name: Push config to branch
-    run: |
-      SRC="/workdir/openwrt/.config"
-      DST="$GITHUB_WORKSPACE/${CONFIG_FILE}"
-
-      mkdir -p "$(dirname "$DST")"
-      cp -f "$SRC" "$DST"
-
-      cd "$GITHUB_WORKSPACE"
-
-      git config user.name "github-actions[bot]"
-      git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      git add "$CONFIG_FILE"
-
-      CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-
-      if ! git diff --cached --quiet; then
-        git commit -m "Update config: ${CONFIG_FILE}" || true
-        git pull --rebase origin "$CURRENT_BRANCH"
-        git push -f origin HEAD:"$CURRENT_BRANCH"
-      fi
-```
-
-build:
-name: Build Firmware
-needs: menuconfig
-if: always() && (needs.menuconfig.result == 'success' || needs.menuconfig.result == 'skipped')
-runs-on: ubuntu-22.04
-
-```
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
-
-  - name: Free disk space
-    uses: jlumbroso/free-disk-space@main
-    with:
-      tool-cache: true
-      android: true
-      dotnet: true
-      haskell: true
-      large-packages: true
-      docker-images: true
-      swap-storage: true
-
-  - name: Init Environment
-    run: |
-      sudo -E apt-get -qq update
-      sudo -E apt-get -qq install \
-        ack \
-        antlr3 \
-        asciidoc \
-        autoconf \
-        automake \
-        autopoint \
-        binutils \
-        bison \
-        build-essential \
-        bzip2 \
-        ccache \
-        clang \
-        cmake \
-        cpio \
-        curl \
-        device-tree-compiler \
-        ecj \
-        fastjar \
-        flex \
-        gawk \
-        gettext \
-        gcc-multilib \
-        g++-multilib \
-        git \
-        gnutls-dev \
-        gperf \
-        haveged \
-        help2man \
-        intltool \
-        lib32gcc-s1 \
-        libc6-dev-i386 \
-        libelf-dev \
-        libglib2.0-dev \
-        libgmp3-dev \
-        libltdl-dev \
-        libmpc-dev \
-        libmpfr-dev \
-        libncurses-dev \
-        libpython3-dev \
-        libreadline-dev \
-        libssl-dev \
-        libtool \
-        libyaml-dev \
-        libz-dev \
-        lld \
-        llvm \
-        lrzsz \
-        mkisofs \
-        msmtp \
-        nano \
-        ninja-build \
-        p7zip \
-        p7zip-full \
-        patch \
-        pkgconf \
-        python3 \
-        python3-pip \
-        python3-ply \
-        python3-docutils \
-        python3-pyelftools \
-        qemu-utils \
-        re2c \
-        rsync \
-        scons \
-        squashfs-tools \
-        subversion \
-        swig \
-        texinfo \
-        uglifyjs \
-        upx-ucl \
-        unzip \
-        vim \
-        wget \
-        xmlto \
-        xxd \
-        zlib1g-dev \
-        zstd
-
-      sudo timedatectl set-timezone "$TZ"
-      sudo mkdir -p /workdir
-      sudo chown $USER:$GROUPS /workdir
-
-  - name: Clone source code
-    working-directory: /workdir
-    run: |
-      git clone "$REPO_URL" -b "$REPO_BRANCH" --single-branch --filter=blob:none openwrt
-
-      if [ -n "$REPO_COMMIT" ]; then
-        cd openwrt
-        git checkout "$REPO_COMMIT"
-      fi
-
-      ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
-
-  - name: Setup ccache and download cache
-    uses: actions/cache@v4
-    with:
-      path: |
-        /workdir/.ccache
-        /workdir/openwrt/dl
-      key: ${{ runner.os }}-openwrt-combined-${{ env.REPO_BRANCH }}-${{ hashFiles('config/*.config') }}
-      restore-keys: |
-        ${{ runner.os }}-openwrt-combined-${{ env.REPO_BRANCH }}-
-
-  - name: Configure ccache
-    run: |
-      ccache --set-config=max_size="$CCACHE_MAXSIZE"
-      ccache --set-config=cache_dir="$CCACHE_DIR"
-      ccache --set-config=compression=true
-      ccache -z
-
-  - name: Update and install feeds
-    run: |
-      cd /workdir/openwrt
-
-      if [ -f "$GITHUB_WORKSPACE/$FEEDS_CONF" ]; then
-        cp -f "$GITHUB_WORKSPACE/$FEEDS_CONF" feeds.conf.default
-      fi
-
-      chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
-      "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
-      ./scripts/feeds update -a
-      ./scripts/feeds install -a
-
-      chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
-  - name: Multi-device compilation loop
-    id: compile
-    run: |
-      if [ "$DEVICE_INPUT" = "all" ]; then
-        DEVICES="512M 256M 128M 128M-Ubootmod"
-      else
-        DEVICES="$DEVICE_INPUT"
-      fi
-
-      mkdir -p "$GITHUB_WORKSPACE/firmware_collection"
-
-      cd /workdir/openwrt
-
-      for DEV in $DEVICES; do
-        echo "::group::Building $DEV"
-
-        case "$DEV" in
-          "512M")
-            CONFIG="config/512m.config"
-            ;;
-          "256M")
-            CONFIG="config/256m.config"
-            ;;
-          "128M")
-            CONFIG="config/128m.config"
-            ;;
-          "128M-Ubootmod")
-            CONFIG="config/128muboot.config"
-            ;;
-          *)
-            echo "Unsupported device: $DEV"
-            exit 1
-            ;;
-        esac
-
-        echo "Using Config: $CONFIG"
-
-        if [ ! -f "$GITHUB_WORKSPACE/$CONFIG" ]; then
-          echo "Config file not found: $GITHUB_WORKSPACE/$CONFIG"
-          exit 1
-        fi
-
-        cp -f "$GITHUB_WORKSPACE/$CONFIG" .config
-
-        "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
-        make defconfig
-        make download -j"$(nproc)"
-
-        if ! make -j"$(nproc)" CC="ccache gcc" CXX="ccache g++"; then
-          echo "Multi-threaded build failed, retrying single-threaded..."
-          make -j1 V=s || exit 1
-        fi
-
-        echo "$DEV build finished."
-        df -hT /workdir
-        echo "::endgroup::"
-      done
-
-      echo "Collecting artifacts"
-
-      find bin/targets/ -type f \( \
-        -name "*sysupgrade.bin" -o \
-        -name "*factory.bin" -o \
-        -name "*ubootmod*.bin" -o \
-        -name "*.itb" -o \
-        -name "*.img.gz" -o \
-        -name "sha256sums" -o \
-        -name "manifest" \
-      \) -exec cp -f {} "$GITHUB_WORKSPACE/firmware_collection/" \;
-
-      ls -lh "$GITHUB_WORKSPACE/firmware_collection/"
-
-      echo "status=success" >> "$GITHUB_OUTPUT"
-
-  - name: Upload binaries as artifacts
-    uses: actions/upload-artifact@v4
-    if: steps.compile.outputs.status == 'success'
-    with:
-      name: ImmortalWrt_Combined_${{ env.DEVICE_INPUT }}_${{ env.REPO_BRANCH }}
-      path: ${{ github.workspace }}/firmware_collection/*
-
-  - name: Generate release tag
-    id: tag
-    if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true'
-    run: |
-      BUILD_TIME="$(date +"%Y%m%d-%H%M")"
-      RELEASE_TAG="ImmortalWrt-${BUILD_TIME}"
-
-      echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-
-      cat > release.txt << EOF
-      ## ImmortalWrt Firmware Release
-
-      **Release:** $RELEASE_TAG
-      **Branch:** $REPO_BRANCH
-      **Device:** ${DEVICE_INPUT}
-      **Build Date:** $(date +"%Y-%m-%d %H:%M:%S")
-      **Compiler:** GCC with ccache
-
-      ## Download
-
-      Download the firmware files from the assets below.
-
-      ## Included
-
-      - Cudy TR3000 v1 512M Flash build
-      - 4G / LTE USB modem drivers
-      - QMI / MBIM / RNDIS / CDC ECM / CDC NCM
-      - USB Serial / Option / WWAN / CDC WDM
-      - VoHive built-in
-      - PassWall Chinese
-      - Nikki Chinese
-      - Aurora theme
-      - Argon theme
-      - USB / HDD automount support
-
-      ## Warning
-
-      512M firmware is only for Cudy TR3000 v1 devices modified with 512M Flash.
-
-      Do not flash it to original 128M / 256M devices.
-
-      Built with GitHub Actions.
-      EOF
-
-      echo "status=success" >> "$GITHUB_OUTPUT"
-
-  - name: Upload to Release
-    uses: softprops/action-gh-release@v2
-    if: steps.tag.outputs.status == 'success'
-    with:
-      tag_name: ${{ steps.tag.outputs.release_tag }}
-      body_path: release.txt
-      prerelease: ${{ env.PRERELEASE == 'true' }}
-      files: ${{ github.workspace }}/firmware_collection/*
-
-  - name: Delete old workflow runs
-    uses: Mattraks/delete-workflow-runs@v2
-    with:
-      retain_days: 0
-      keep_minimum_runs: 9
-```
+}
+
+if (document.readyState === 'loading') {
+document.addEventListener('DOMContentLoaded', addBadge);
+} else {
+addBadge();
+}
+})();
+EOF
+
+cat > files/etc/uci-defaults/93-halox-badge <<'EOF'
+#!/bin/sh
+
+JS='/luci-static/custom/halox-badge.js'
+TAG='<script src="/luci-static/custom/halox-badge.js"></script>'
+
+for f in 
+/usr/lib/lua/luci/view/themes/*/footer.htm 
+/usr/lib/lua/luci/view/themes/*/footer.ut 
+/usr/share/ucode/luci/template/themes/*/footer.ut 
+/usr/share/ucode/luci/template/themes/*/footer.htm
+do
+[ -f "$f" ] || continue
+grep -q "$JS" "$f" && continue
 
+if grep -q '</body>' "$f"; then
+sed -i "s#</body>#$TAG\n</body>#g" "$f"
+else
+echo "$TAG" >> "$f"
+fi
+done
+
+exit 0
+EOF
+
+chmod +x files/etc/uci-defaults/93-halox-badge
+
+# ===============================
+
+# Full package config
+
+# ===============================
+
+cat >> .config <<'EOF'
+
+# ============================================================
+
+# 4G / LTE / USB modem full drivers
+
+# ============================================================
+
+CONFIG_PACKAGE_usbutils=y
+CONFIG_PACKAGE_usb-modeswitch=y
+
+CONFIG_PACKAGE_kmod-usb-core=y
+CONFIG_PACKAGE_kmod-usb2=y
+CONFIG_PACKAGE_kmod-usb3=y
+
+CONFIG_PACKAGE_kmod-usb-net=y
+CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+CONFIG_PACKAGE_kmod-usb-net-huawei-cdc-ncm=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+CONFIG_PACKAGE_kmod-usb-net-rndis=y
+CONFIG_PACKAGE_kmod-usb-net-sierrawireless=y
+CONFIG_PACKAGE_kmod-usb-net-kalmia=y
+
+CONFIG_PACKAGE_kmod-usb-wdm=y
+CONFIG_PACKAGE_kmod-usb-acm=y
+
+CONFIG_PACKAGE_kmod-usb-serial=y
+CONFIG_PACKAGE_kmod-usb-serial-option=y
+CONFIG_PACKAGE_kmod-usb-serial-wwan=y
+CONFIG_PACKAGE_kmod-usb-serial-qualcomm=y
+CONFIG_PACKAGE_kmod-usb-serial-sierrawireless=y
+CONFIG_PACKAGE_kmod-usb-serial-ch341=y
+CONFIG_PACKAGE_kmod-usb-serial-cp210x=y
+CONFIG_PACKAGE_kmod-usb-serial-ftdi=y
+CONFIG_PACKAGE_kmod-usb-serial-pl2303=y
+CONFIG_PACKAGE_kmod-usb-serial-mos7720=y
+CONFIG_PACKAGE_kmod-usb-serial-mos7840=y
+
+CONFIG_PACKAGE_uqmi=y
+CONFIG_PACKAGE_umbim=y
+CONFIG_PACKAGE_comgt=y
+CONFIG_PACKAGE_comgt-ncm=y
+CONFIG_PACKAGE_chat=y
+CONFIG_PACKAGE_wwan=y
+CONFIG_PACKAGE_minicom=y
+CONFIG_PACKAGE_picocom=y
+
+CONFIG_PACKAGE_luci-proto-qmi=y
+CONFIG_PACKAGE_luci-proto-mbim=y
+
+# ============================================================
+
+# PassWall Chinese
+
+# ============================================================
+
+CONFIG_PACKAGE_luci-app-passwall=y
+CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
+
+CONFIG_PACKAGE_chinadns-ng=y
+CONFIG_PACKAGE_dns2socks=y
+CONFIG_PACKAGE_haproxy=y
+CONFIG_PACKAGE_ipt2socks=y
+CONFIG_PACKAGE_microsocks=y
+CONFIG_PACKAGE_simple-obfs=y
+CONFIG_PACKAGE_trojan-plus=y
+CONFIG_PACKAGE_xray-core=y
+CONFIG_PACKAGE_sing-box=y
+
+# ============================================================
+
+# Nikki Chinese
+
+# ============================================================
+
+CONFIG_PACKAGE_nikki=y
+CONFIG_PACKAGE_luci-app-nikki=y
+CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y
+
+# ============================================================
+
+# LuCI themes
+
+# ============================================================
+
+CONFIG_PACKAGE_luci-theme-aurora=y
+CONFIG_PACKAGE_luci-app-aurora-config=y
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-app-argon-config=y
+
+# ============================================================
+
+# Bandix
+
+# ============================================================
+
+CONFIG_PACKAGE_luci-app-bandix=y
+CONFIG_PACKAGE_bandix=y
+
+# ============================================================
+
+# USB / HDD automount
+
+# ============================================================
+
+CONFIG_PACKAGE_block-mount=y
+CONFIG_PACKAGE_luci-app-diskman=y
+CONFIG_PACKAGE_luci-app-hd-idle=y
+CONFIG_PACKAGE_hd-idle=y
+
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+
+CONFIG_PACKAGE_kmod-scsi-core=y
+CONFIG_PACKAGE_kmod-scsi-generic=y
+
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-f2fs=y
+CONFIG_PACKAGE_kmod-fs-exfat=y
+CONFIG_PACKAGE_kmod-fs-vfat=y
+CONFIG_PACKAGE_kmod-fs-ntfs3=y
+
+CONFIG_PACKAGE_e2fsprogs=y
+CONFIG_PACKAGE_f2fs-tools=y
+CONFIG_PACKAGE_exfat-mkfs=y
+CONFIG_PACKAGE_exfat-fsck=y
+CONFIG_PACKAGE_ntfs-3g=y
+CONFIG_PACKAGE_ntfs-3g-utils=y
+CONFIG_PACKAGE_parted=y
+CONFIG_PACKAGE_fdisk=y
+CONFIG_PACKAGE_lsblk=y
+CONFIG_PACKAGE_blkid=y
+
+CONFIG_PACKAGE_kmod-nls-base=y
+CONFIG_PACKAGE_kmod-nls-cp437=y
+CONFIG_PACKAGE_kmod-nls-iso8859-1=y
+CONFIG_PACKAGE_kmod-nls-utf8=y
+
+# ============================================================
+
+# Useful LuCI tools
+
+# ============================================================
+
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_luci-app-filebrowser=y
+CONFIG_PACKAGE_luci-app-commands=y
+
+EOF
+
+# ===============================
+
+# Force config effective
+
+# ===============================
+
+make defconfig
+
+# ===============================
+
+# Final target check
+
+# ===============================
+
+grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_cudy_tr3000-512mb-v1=y' .config
+grep -q '^CONFIG_TARGET_PROFILE="DEVICE_cudy_tr3000-512mb-v1"' .config
+! grep -q '^CONFIG_TARGET_mediatek_filogic_DEVICE_cudy_tr3000-v1-256mb=y' .config
+
+# ===============================
+
+# Final 4G driver check
+
+# ===============================
+
+grep -q '^CONFIG_PACKAGE_kmod-usb-net=y' .config
+grep -q '^CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y' .config
+grep -q '^CONFIG_PACKAGE_kmod-usb-wdm=y' .config
+grep -q '^CONFIG_PACKAGE_kmod-usb-serial=y' .config
+grep -q '^CONFIG_PACKAGE_kmod-usb-serial-option=y' .config
+grep -q '^CONFIG_PACKAGE_kmod-usb-serial-wwan=y' .config
+grep -q '^CONFIG_PACKAGE_kmod-usb-net-rndis=y' .config
+grep -q '^CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y' .config
+grep -q '^CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y' .config
+grep -q '^CONFIG_PACKAGE_luci-proto-qmi=y' .config
+grep -q '^CONFIG_PACKAGE_luci-proto-mbim=y' .config
+
+# ===============================
+
+# Print final check info
+
+# ===============================
+
+echo "========== FINAL TARGET CHECK =========="
+grep -E 'CONFIG_TARGET_mediatek_filogic_DEVICE_cudy_tr3000|CONFIG_TARGET_PROFILE' .config
+
+echo "========== FINAL 4G DRIVER CHECK =========="
+grep -E 'CONFIG_PACKAGE_(kmod-usb-net|kmod-usb-net-qmi-wwan|kmod-usb-wdm|kmod-usb-serial|kmod-usb-serial-option|kmod-usb-serial-wwan|kmod-usb-net-rndis|kmod-usb-net-cdc-ether|kmod-usb-net-cdc-mbim|kmod-usb-net-cdc-ncm|uqmi|umbim|wwan|usb-modeswitch|luci-proto-qmi|luci-proto-mbim)=y' .config || true
+
+echo "========== FINAL APP CHECK =========="
+grep -E 'CONFIG_PACKAGE_(luci-app-passwall|luci-i18n-passwall-zh-cn|nikki|luci-app-nikki|luci-i18n-nikki-zh-cn|luci-theme-aurora|luci-app-aurora-config|luci-theme-argon|luci-app-argon-config|luci-app-bandix|bandix|block-mount|luci-app-diskman|luci-app-hd-idle|luci-app-ttyd|luci-app-filebrowser|luci-app-commands)=y' .config || true
+
+echo "========== FINAL CUSTOM FILE CHECK =========="
+ls -lh files/usr/bin/vohive
+ls -lh files/etc/init.d/vohive
+ls -lh files/etc/vohive/config.yaml
+ls -lh files/www/luci-static/custom/halox-badge.js
+ls -lh files/etc/uci-defaults/90-custom-defaults
+ls -lh files/etc/uci-defaults/91-automount
+ls -lh files/etc/uci-defaults/92-vohive
+ls -lh files/etc/uci-defaults/93-halox-badge
+
+echo "OK: TR3000 512MB Full Build config + DTS + 4G drivers + apps + VoHive + HaloX badge enabled."
