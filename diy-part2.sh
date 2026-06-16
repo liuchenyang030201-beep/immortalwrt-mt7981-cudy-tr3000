@@ -4,10 +4,7 @@
 # File name: diy-part2.sh
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 #
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
 # This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
 #
 
 set -e
@@ -65,6 +62,47 @@ mkdir -p files/etc/uci-defaults
 mkdir -p files/etc/init.d
 mkdir -p files/etc/vohive
 mkdir -p files/usr/bin
+mkdir -p files/www/luci-static/custom
+
+# ===============================
+# Default system settings
+# ===============================
+cat > files/etc/uci-defaults/90-custom-defaults <<'EOF'
+#!/bin/sh
+
+uci -q set system.@system[0].hostname='CudyX'
+uci -q set system.@system[0].zonename='Asia/Shanghai'
+uci -q set system.@system[0].timezone='CST-8'
+
+uci -q set network.lan.ipaddr='192.168.2.1'
+uci -q set network.lan.netmask='255.255.255.0'
+
+uci -q commit system
+uci -q commit network
+
+exit 0
+EOF
+
+chmod +x files/etc/uci-defaults/90-custom-defaults
+
+# ===============================
+# USB / HDD automount default
+# ===============================
+cat > files/etc/uci-defaults/91-automount <<'EOF'
+#!/bin/sh
+
+uci -q set fstab.@global[0].anon_swap='0'
+uci -q set fstab.@global[0].anon_mount='1'
+uci -q set fstab.@global[0].auto_swap='0'
+uci -q set fstab.@global[0].auto_mount='1'
+uci -q set fstab.@global[0].delay_root='5'
+uci -q set fstab.@global[0].check_fs='0'
+uci -q commit fstab
+
+exit 0
+EOF
+
+chmod +x files/etc/uci-defaults/91-automount
 
 # ===============================
 # VoHive binary built-in
@@ -105,7 +143,7 @@ EOF
 
 chmod +x files/etc/init.d/vohive
 
-cat > files/etc/uci-defaults/99-vohive <<'EOF'
+cat > files/etc/uci-defaults/92-vohive <<'EOF'
 #!/bin/sh
 
 /etc/init.d/vohive enable
@@ -114,26 +152,86 @@ cat > files/etc/uci-defaults/99-vohive <<'EOF'
 exit 0
 EOF
 
-chmod +x files/etc/uci-defaults/99-vohive
+chmod +x files/etc/uci-defaults/92-vohive
 
 # ===============================
-# USB / HDD automount default
+# LuCI custom corner badge
 # ===============================
-cat > files/etc/uci-defaults/99-automount <<'EOF'
+cat > files/www/luci-static/custom/halox-badge.js <<'EOF'
+(function () {
+  function addBadge() {
+    if (document.getElementById('halox-build-badge')) return;
+
+    var badge = document.createElement('a');
+    badge.id = 'halox-build-badge';
+    badge.href = 'https://halox.pages.dev/';
+    badge.target = '_blank';
+    badge.rel = 'noopener noreferrer';
+    badge.innerText = '编译自小猫崽 · HaloX';
+
+    badge.style.position = 'fixed';
+    badge.style.right = '16px';
+    badge.style.bottom = '10px';
+    badge.style.zIndex = '99999';
+    badge.style.padding = '6px 10px';
+    badge.style.borderRadius = '10px';
+    badge.style.background = 'rgba(30, 30, 46, 0.72)';
+    badge.style.backdropFilter = 'blur(8px)';
+    badge.style.color = '#b4befe';
+    badge.style.fontSize = '12px';
+    badge.style.lineHeight = '1';
+    badge.style.textDecoration = 'none';
+    badge.style.boxShadow = '0 4px 14px rgba(0,0,0,0.25)';
+    badge.style.border = '1px solid rgba(180,190,254,0.35)';
+    badge.style.fontFamily = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+    badge.onmouseenter = function () {
+      badge.style.background = 'rgba(137, 180, 250, 0.22)';
+      badge.style.color = '#ffffff';
+    };
+
+    badge.onmouseleave = function () {
+      badge.style.background = 'rgba(30, 30, 46, 0.72)';
+      badge.style.color = '#b4befe';
+    };
+
+    document.body.appendChild(badge);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', addBadge);
+  } else {
+    addBadge();
+  }
+})();
+EOF
+
+cat > files/etc/uci-defaults/93-halox-badge <<'EOF'
 #!/bin/sh
 
-uci -q set fstab.@global[0].anon_swap='0'
-uci -q set fstab.@global[0].anon_mount='1'
-uci -q set fstab.@global[0].auto_swap='0'
-uci -q set fstab.@global[0].auto_mount='1'
-uci -q set fstab.@global[0].delay_root='5'
-uci -q set fstab.@global[0].check_fs='0'
-uci -q commit fstab
+JS='/luci-static/custom/halox-badge.js'
+TAG='<script src="/luci-static/custom/halox-badge.js"></script>'
+
+for f in \
+  /usr/lib/lua/luci/view/themes/*/footer.htm \
+  /usr/lib/lua/luci/view/themes/*/footer.ut \
+  /usr/share/ucode/luci/template/themes/*/footer.ut \
+  /usr/share/ucode/luci/template/themes/*/footer.htm
+do
+  [ -f "$f" ] || continue
+  grep -q "$JS" "$f" && continue
+
+  if grep -q '</body>' "$f"; then
+    sed -i "s#</body>#$TAG\n</body>#g" "$f"
+  else
+    echo "$TAG" >> "$f"
+  fi
+done
 
 exit 0
 EOF
 
-chmod +x files/etc/uci-defaults/99-automount
+chmod +x files/etc/uci-defaults/93-halox-badge
 
 # ===============================
 # Full package config
@@ -281,7 +379,7 @@ EOF
 # ===============================
 make defconfig
 
-# oldconfig can hang on some OpenWrt trees, avoid interactive prompt
+# Avoid interactive prompt
 yes "" | make oldconfig || make defconfig
 
 # ===============================
@@ -307,20 +405,25 @@ grep -q '^CONFIG_PACKAGE_luci-proto-qmi=y' .config
 grep -q '^CONFIG_PACKAGE_luci-proto-mbim=y' .config
 
 # ===============================
-# Soft check packages
+# Print final check info
 # ===============================
 echo "========== FINAL TARGET CHECK =========="
 grep -E 'CONFIG_TARGET_mediatek_filogic_DEVICE_cudy_tr3000|CONFIG_TARGET_PROFILE' .config
 
 echo "========== FINAL 4G DRIVER CHECK =========="
-grep -E 'CONFIG_PACKAGE_(kmod-usb-net|kmod-usb-net-qmi-wwan|kmod-usb-wdm|kmod-usb-serial|kmod-usb-serial-option|kmod-usb-serial-wwan|kmod-usb-net-rndis|kmod-usb-net-cdc-ether|kmod-usb-net-cdc-mbim|kmod-usb-net-cdc-ncm|kmod-usb-net-cdc-ether|uqmi|umbim|wwan|usb-modeswitch|luci-proto-qmi|luci-proto-mbim)=y' .config || true
+grep -E 'CONFIG_PACKAGE_(kmod-usb-net|kmod-usb-net-qmi-wwan|kmod-usb-wdm|kmod-usb-serial|kmod-usb-serial-option|kmod-usb-serial-wwan|kmod-usb-net-rndis|kmod-usb-net-cdc-ether|kmod-usb-net-cdc-mbim|kmod-usb-net-cdc-ncm|uqmi|umbim|wwan|usb-modeswitch|luci-proto-qmi|luci-proto-mbim)=y' .config || true
 
 echo "========== FINAL APP CHECK =========="
 grep -E 'CONFIG_PACKAGE_(luci-app-passwall|luci-i18n-passwall-zh-cn|nikki|luci-app-nikki|luci-i18n-nikki-zh-cn|luci-theme-aurora|luci-app-aurora-config|luci-theme-argon|luci-app-argon-config|luci-app-bandix|bandix|block-mount|luci-app-diskman|luci-app-hd-idle|luci-app-ttyd|luci-app-filebrowser|luci-app-commands)=y' .config || true
 
-echo "========== FINAL VOHIVE CHECK =========="
+echo "========== FINAL CUSTOM FILE CHECK =========="
 ls -lh files/usr/bin/vohive
 ls -lh files/etc/init.d/vohive
 ls -lh files/etc/vohive/config.yaml
+ls -lh files/www/luci-static/custom/halox-badge.js
+ls -lh files/etc/uci-defaults/90-custom-defaults
+ls -lh files/etc/uci-defaults/91-automount
+ls -lh files/etc/uci-defaults/92-vohive
+ls -lh files/etc/uci-defaults/93-halox-badge
 
-echo "OK: TR3000 512MB Full Build config + DTS + 4G drivers + apps enabled."
+echo "OK: TR3000 512MB Full Build config + DTS + 4G drivers + apps + VoHive + HaloX badge enabled."
