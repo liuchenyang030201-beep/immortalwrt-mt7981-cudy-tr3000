@@ -2,14 +2,15 @@
 #
 # File name: diy-part1.sh
 # Description: OpenWrt DIY script part 1 (Before Update feeds)
+# Stable build: PassWall removed
 #
 
 set -e
 
-echo "============================================================"
-echo " DIY PART1: Add extra packages before feeds update"
-echo " PassWall removed for stable build"
-echo "============================================================"
+printf '%s\n' '============================================================'
+printf '%s\n' ' DIY PART1: Add extra packages before feeds update'
+printf '%s\n' ' PassWall removed for stable build'
+printf '%s\n' '============================================================'
 
 mkdir -p package
 
@@ -17,15 +18,15 @@ download_repo() {
   local owner="$1"
   local repo="$2"
   local dir="$3"
-  local branch=""
-  local url=""
-  local tmp=""
+  local branch
+  local url
+  local tmp
   local ok="0"
 
-  echo "============================================================"
-  echo "Download ${owner}/${repo}"
-  echo "Target ${dir}"
-  echo "============================================================"
+  printf '%s\n' '============================================================'
+  printf 'Download %s/%s\n' "$owner" "$repo"
+  printf 'Target %s\n' "$dir"
+  printf '%s\n' '============================================================'
 
   rm -rf "$dir"
 
@@ -38,7 +39,7 @@ download_repo() {
       tar -xzf "$tmp" -C "$dir" --strip-components=1
       rm -f "$tmp"
       ok="1"
-      echo "OK ${owner}/${repo} ${branch}"
+      printf 'Download OK: %s/%s branch %s\n' "$owner" "$repo" "$branch"
       break
     fi
 
@@ -46,13 +47,13 @@ download_repo() {
   done
 
   if [ "$ok" != "1" ]; then
-    echo "Tarball failed, try git clone"
+    printf '%s\n' 'Tarball failed, try git clone'
     git clone --depth=1 "https://github.com/${owner}/${repo}.git" "$dir"
   fi
 }
 
 if [ -d "$GITHUB_WORKSPACE/package/luci-compat-keep" ]; then
-  echo "Copy local luci-compat-keep"
+  printf '%s\n' 'Copy local luci-compat-keep'
   rm -rf package/luci-compat-keep
   cp -r "$GITHUB_WORKSPACE/package/luci-compat-keep" package/
 fi
@@ -67,22 +68,24 @@ rm -rf package/luci-app-argon-config
 rm -rf package/luci-app-bandix
 rm -rf package/openwrt-bandix
 
+# Nikki
 download_repo "nikkinikki-org" "OpenWrt-nikki" "package/nikki"
 
+# LuCI themes
 download_repo "eamonxg" "luci-theme-aurora" "package/luci-theme-aurora"
 download_repo "eamonxg" "luci-app-aurora-config" "package/luci-app-aurora-config"
-
 download_repo "jerrykuku" "luci-theme-argon" "package/luci-theme-argon"
 download_repo "jerrykuku" "luci-app-argon-config" "package/luci-app-argon-config"
 
+# Bandix
 download_repo "timsaya" "luci-app-bandix" "package/luci-app-bandix"
 download_repo "timsaya" "openwrt-bandix" "package/openwrt-bandix"
 
 rm -rf package/passwall
 rm -rf package/passwall-packages
 
-find package -name ".git" -type d -prune -exec rm -rf {} + || true
+find package -name '.git' -type d -prune -exec rm -rf {} + || true
 
-echo "============================================================"
-echo " DIY PART1 done"
-echo "============================================================"
+printf '%s\n' '============================================================'
+printf '%s\n' ' DIY PART1 done'
+printf '%s\n' '============================================================'
