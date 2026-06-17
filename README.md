@@ -7,20 +7,11 @@
 基于 GitHub Actions 的 **Cudy TR3000 v1 512M Flash 改版机** ImmortalWrt 自动编译项目。
 
 本项目适用于已经改装为 **512M Flash** 的 Cudy TR3000 v1，支持在 GitHub Actions 中一键选择 `512M` 编译，并集成常见 4G 模块相关驱动。
-
----
-
-## ⚠️ 重要警告
-
-本项目固件 **仅适用于 Cudy TR3000 v1 512M Flash 改版机**。
-
-请勿刷入以下设备：
-
-* 原厂 128M Flash 机器
-* 普通 256M Flash 机器
-* 未改 Flash 的机器
-* 不确定 Flash 容量或分区布局的机器
-
+修改文件以适配128 
+ **128M Flash** 
+修改文件以适配256
+ **128M Flash**
+ 
 刷错固件可能导致：
 
 * 无法启动
@@ -66,24 +57,15 @@ https://github.com/zhuannn/cudy-tr3000-512
 | 项目     | 说明                   |
 | ------ | -------------------- |
 | 设备型号   | Cudy TR3000 v1       |
-| Flash  | 512M Flash 改版机       |
+| Flash  | 512M Flash 改版机    
+| Flash  | 256M Flash 机型
+| Flash  | 128M Flash 机型
 | Target | mediatek / filogic   |
 | SoC    | MT7981               |
 | 内核     | 6.6                  |
 | 设备配置   | cudy_tr3000-512mb-v1 |
 
----
 
-## 不支持设备
-
-| 设备                   | 状态            |
-| -------------------- | ------------- |
-| 原厂 128M Flash TR3000 | 不支持           |
-| 普通 256M Flash TR3000 | 不建议刷入 512M 固件 |
-| 非 Cudy TR3000 v1     | 不支持           |
-| 未确认分区布局的机器           | 不建议刷入         |
-
----
 
 ## 4G 模块驱动支持
 
