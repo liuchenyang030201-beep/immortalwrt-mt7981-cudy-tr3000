@@ -1,3 +1,7 @@
+<img width="1200" height="1200" alt="image" src="https://github.com/user-attachments/assets/15feaff7-49f2-4927-888f-7ac2258ba5ff" />
+
+
+
 # Cudy TR3000 v1 512M ImmortalWrt 自动编译
 
 基于 GitHub Actions 的 **Cudy TR3000 v1 512M Flash 改版机** ImmortalWrt 自动编译项目。
