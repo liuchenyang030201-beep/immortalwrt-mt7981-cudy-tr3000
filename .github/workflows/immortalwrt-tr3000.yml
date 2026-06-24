@@ -1,0 +1,184 @@
+name: Build ImmortalWrt TR3000
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/immortalwrt-tr3000.yml"
+      - "feeds-immortalwrt.conf"
+      - "diy-part*.sh"
+      - "diy-immortal512-zhuannn.sh"
+      - "config/**"
+      - "files/**"
+      - "openwrt-mod/**"
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: ImmortalWrt source repository
+        required: true
+        default: https://github.com/immortalwrt/immortalwrt.git
+      branch:
+        description: ImmortalWrt source branch
+        required: true
+        default: v24.10.4
+      release:
+        description: Upload firmware to GitHub Release
+        type: boolean
+        required: true
+        default: false
+
+env:
+  REPO_URL: ${{ github.event.inputs.repo || 'https://github.com/immortalwrt/immortalwrt.git' }}
+  REPO_BRANCH: ${{ github.event.inputs.branch || 'v24.10.4' }}
+  FEEDS_CONF: feeds-immortalwrt.conf
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-immortal512-zhuannn.sh
+  CCACHE_DIR: /workdir/.ccache
+  CCACHE_MAXSIZE: 2G
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubootmod-512m
+            config: config/tr3000-512mb-v1-immortal.config
+            device: cudy_tr3000-512mb-v1
+            compat: cudy,tr3000-v1
+            artifact: ImmortalWrt_TR3000_512mb_v3_zhuannn_openclash_passwall_daed_istore_4g5g
+
+    steps:
+      - name: Checkout builder
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Init build environment
+        run: |
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+          sudo timedatectl set-timezone "$TZ"
+          sudo mkdir -p /workdir
+          sudo chown "$USER:$USER" /workdir
+
+      - name: Clone ImmortalWrt source
+        working-directory: /workdir
+        run: |
+          git clone "$REPO_URL" -b "$REPO_BRANCH" --single-branch --filter=blob:none openwrt
+          ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+
+      - name: Setup cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /workdir/.ccache
+            /workdir/openwrt/dl
+          key: ${{ runner.os }}-immortalwrt-tr3000-daed-v3-${{ env.REPO_BRANCH }}-${{ matrix.device }}-${{ hashFiles('config/*.config', 'feeds-immortalwrt.conf', 'diy-part*.sh', 'diy-immortal512-zhuannn.sh', 'openwrt-mod/**') }}
+          restore-keys: |
+            ${{ runner.os }}-immortalwrt-tr3000-daed-v3-${{ env.REPO_BRANCH }}-${{ matrix.device }}-
+            ${{ runner.os }}-immortalwrt-tr3000-daed-v3-${{ env.REPO_BRANCH }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --set-config=max_size="$CCACHE_MAXSIZE"
+          ccache --set-config=cache_dir="$CCACHE_DIR"
+          ccache --set-config=compression=true
+          ccache -z
+
+      - name: Update and install feeds
+        run: |
+          cp -f "$GITHUB_WORKSPACE/$FEEDS_CONF" /workdir/openwrt/feeds.conf.default
+          chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
+          cd /workdir/openwrt
+          "$GITHUB_WORKSPACE/$DIY_P1_SH"
+          ./scripts/feeds update -a
+          rm -rf feeds/packages/lang/golang
+          git clone https://github.com/sbwml/packages_lang_golang.git -b 26.x --single-branch --depth 1 feeds/packages/lang/golang
+          grep -E 'GO_VERSION_MAJOR_MINOR:=1\.26|GO_VERSION_PATCH:=' feeds/packages/lang/golang/golang/Makefile
+          ./scripts/feeds install -a
+
+      - name: Apply TR3000 patches and config
+        run: |
+          chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
+          cd /workdir/openwrt
+          CONFIG_FILE="${{ matrix.config }}" "$GITHUB_WORKSPACE/$DIY_P2_SH"
+          make defconfig
+          grep -E 'CONFIG_TARGET_mediatek_filogic_DEVICE_${{ matrix.device }}|CONFIG_PACKAGE_luci-app-(store|openclash|passwall|daed)|CONFIG_PACKAGE_(daed|modemmanager|luci-proto-qmi|luci-proto-mbim|kmod-tcp-bbr|kmod-sched|kmod-sched-core|kmod-sched-bpf|kmod-veth|kmod-xdp-sockets-diag|tc-full|iperf3|v2ray-geoip|v2ray-geosite)|CONFIG_KERNEL_(DEBUG_INFO_BTF|BPF_EVENTS|CGROUP_BPF|XDP_SOCKETS)|CONFIG_BPF_TOOLCHAIN_HOST|CONFIG_USE_LLVM_HOST|CONFIG_DAED_USE_KERNEL_BTF' .config
+          grep -q 'CONFIG_BPF_TOOLCHAIN_HOST=y' .config
+          grep -q 'CONFIG_PACKAGE_luci-app-openclash=y' .config
+          grep -q 'CONFIG_PACKAGE_luci-app-passwall=y' .config
+          grep -q 'CONFIG_PACKAGE_luci-app-daed=y' .config
+          grep -q 'CONFIG_PACKAGE_daed=y' .config
+          grep -q 'CONFIG_KERNEL_DEBUG_INFO_BTF=y' .config
+          grep -q 'CONFIG_KERNEL_XDP_SOCKETS=y' .config
+          grep -q 'CONFIG_PACKAGE_kmod-sched-core=y' .config
+          grep -q 'CONFIG_PACKAGE_kmod-sched-bpf=y' .config
+          grep -q 'CONFIG_PACKAGE_kmod-veth=y' .config
+          grep -A28 'define Device/${{ matrix.device }}' target/linux/mediatek/image/filogic.mk
+          grep -n -E 'model =|compatible =|reg = <0x005c0000' target/linux/mediatek/dts/mt7981b-cudy-tr3000-512mb-v1.dts
+          grep -q 'IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata' target/linux/mediatek/image/filogic.mk
+          grep -q 'reg = <0x005c0000 0x1FA40000>;' target/linux/mediatek/dts/mt7981b-cudy-tr3000-512mb-v1.dts
+          grep -q 'compatible = "cudy,tr3000-v1", "mediatek,mt7981";' target/linux/mediatek/dts/mt7981b-cudy-tr3000-512mb-v1.dts
+          grep -n -A5 -B5 '${{ matrix.compat }}' target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh || true
+          grep -Fq '${{ matrix.compat }}' target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
+          test -s files/etc/config/network
+          test -s files/etc/sysctl.d/99-tr3000-tcp-tune.conf
+          grep -q 'net.ipv4.tcp_congestion_control=bbr' files/etc/sysctl.d/99-tr3000-tcp-tune.conf
+
+      - name: Download packages
+        run: |
+          cd /workdir/openwrt
+          make download -j"$(nproc)"
+
+      - name: Build firmware
+        run: |
+          cd /workdir/openwrt
+          if ! make -j"$(nproc)"; then
+            make -j1 V=s
+          fi
+          ccache -s
+
+      - name: Collect firmware
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/firmware"
+          mkdir -p "$GITHUB_WORKSPACE/firmware"
+          find /workdir/openwrt/bin/targets -type f \( -name "*.bin" -o -name "*.itb" -o -name "*.img" -o -name "*.gz" -o -name "*.manifest" -o -name "sha256sums" \) -not -path "*/packages/*" -print | sort | while read -r file; do
+            rel="${file#/workdir/openwrt/bin/targets/}"
+            cp -v "$file" "$GITHUB_WORKSPACE/firmware/${rel//\//__}"
+          done
+          test -n "$(find "$GITHUB_WORKSPACE/firmware" -maxdepth 1 -type f -print -quit)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: firmware/*
+          if-no-files-found: error
+
+      - name: Upload release
+        if: ${{ inputs.release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="ImmortalWrt-TR3000-${{ matrix.name }}-$(date +'%Y%m%d-%H%M%S')"
+          gh release create "$tag" firmware/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$tag ${{ matrix.name }}" \
+            --notes "ImmortalWrt sysupgrade.bin build for Cudy TR3000 v1 512M using zhuannn/cudy-tr3000-512 device definition, with iStore, OpenClash, PassWall, daed, BBR TCP tuning and 4G/5G modem support."
